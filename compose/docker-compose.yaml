@@ -1,0 +1,65 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: delegation_program
+    ports:
+      - "${POSTGRES_HOST_PORT:-55432}:5432"
+    volumes:
+      - ./config/postgres-init.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d delegation_program"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio12345
+    ports:
+      - "${MINIO_HOST_PORT:-59000}:9000"
+      - "${MINIO_CONSOLE_HOST_PORT:-59001}:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minio minio12345 &&
+      mc mb --ignore-existing local/${E2E_BUCKET:-test-uptime} &&
+      mc anonymous set public local/${E2E_BUCKET:-test-uptime}
+      "
+
+  backend:
+    build:
+      context: ${BACKEND_REPO_PATH:-../../uptime-service-backend}
+      dockerfile: dockerfiles/Dockerfile-delegation-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      CONFIG_FILE: /etc/uptime/config.json
+      AWS_ACCESS_KEY_ID: minio
+      AWS_SECRET_ACCESS_KEY: minio12345
+      AWS_ENDPOINT_URL_S3: http://minio:9000
+      AWS_S3_FORCE_PATH_STYLE: "1"
+      AWS_REGION: us-east-1
+    volumes:
+      - ./config/backend.json:/etc/uptime/config.json:ro
+    ports:
+      - "${BACKEND_HOST_PORT:-8080}:8080"
+    command: ["delegation_backend"]
