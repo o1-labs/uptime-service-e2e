@@ -43,9 +43,7 @@ services:
       "
 
   backend:
-    build:
-      context: ${BACKEND_REPO_PATH:-../../uptime-service-backend}
-      dockerfile: dockerfiles/Dockerfile-delegation-backend
+    image: ghcr.io/o1-labs/uptime-service-backend:${BACKEND_TAG:-latest}
     depends_on:
       postgres:
         condition: service_healthy

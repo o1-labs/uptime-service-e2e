@@ -7,7 +7,7 @@ install:
 
 up:
 	test -f .env || cp .env.example .env
-	$(COMPOSE) up -d --build
+	$(COMPOSE) up -d
 
 down:
 	$(COMPOSE) down -v

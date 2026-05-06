@@ -33,21 +33,16 @@ Out of scope:
 
 ## Prerequisites
 
-You need sibling clones of the SUT repos. The e2e build expects the layout
-```
-o1labs/
-├── uptime-service-e2e/        # this repo
-└── uptime-service-backend/    # built as the docker context
-```
-Override the backend path with `BACKEND_REPO_PATH` in `.env` if your layout differs.
+- Docker + Docker Compose
+- Python ≥ 3.10
 
-> **Backend revision:** the e2e harness depends on `S3OptionsFromEnv` in `uptime-service-backend` (introduced in [PR `feat/s3-force-path-style`](https://github.com/o1-labs/uptime-service-backend/pulls)). Until that PR is merged into `main`, check out the `feat/s3-force-path-style` branch in the backend clone before running `make up`.
+The harness pulls every component as a published image — no source clones needed.
 
 ## Getting started
 
 ```bash
 make install   # pip install -e .
-make up        # build backend image, start postgres + minio + backend
+make up        # pull images, start postgres + minio + backend
 make test      # run pytest
 make down      # stop and wipe volumes
 ```
@@ -57,7 +52,7 @@ make down      # stop and wipe volumes
 1. **S3 emulation** — MinIO. Backend is pointed at it via `AWS_ENDPOINT_URL_S3` + `AWS_S3_FORCE_PATH_STYLE=1`.
 2. **Signing** — disabled in the backend (`verify_signature_disabled: true`); canned `req-no-snark.json` from upstream test data is replayed as-is. Signature verification is unit-tested in `signer_test.go` upstream and doesn't need re-coverage here.
 3. **Whitelist** — disabled (`delegation_whitelist_disabled: true`). Google Sheets path is out of e2e scope.
-4. **Service version pinning** — build context path via `BACKEND_REPO_PATH` env var. Future iterations should pin to a tagged image once published to GHCR.
+4. **Service version pinning** — components are consumed as published GHCR images, pinned via `BACKEND_TAG` (and future `VALIDATION_TAG` etc.) in `.env`. Tests run against production-ready artifacts, not local working trees. Avoid `latest` — pin to a release tag so failures are reproducible and bumps are intentional.
 5. **Leaderboard** — deferred to next iteration.
 
 ## Golden fixtures
