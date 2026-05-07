@@ -94,6 +94,8 @@ def clean_state(db, s3, s3_bucket, s3_prefix):
     """
     with db.cursor() as cur:
         cur.execute("TRUNCATE TABLE submissions RESTART IDENTITY")
+        # bot_logs has FK from points/points_summary/bot_logs_statehash, so cascade
+        cur.execute("TRUNCATE TABLE bot_logs RESTART IDENTITY CASCADE")
     paginator = s3.get_paginator("list_objects_v2")
     keys = [
         {"Key": obj["Key"]}
@@ -102,3 +104,45 @@ def clean_state(db, s3, s3_bucket, s3_prefix):
     ]
     if keys:
         s3.delete_objects(Bucket=s3_bucket, Delete={"Objects": keys})
+
+
+def reset_bot_logs(db, seconds_ago: int = 120):
+    """Reset the validation coordinator's batch progress and force it to re-read.
+
+    The coordinator caches `bot_logs` state in memory and doesn't re-poll
+    between iterations, so simply rewriting the table is invisible to a
+    running coordinator. Restart the validation container after rewriting
+    so its next loop reads the fresh boundary.
+
+    `seconds_ago` should be > SURVEY_INTERVAL_MINUTES * 60 so the next
+    batch window overlaps "now," guaranteeing in-flight submissions land
+    in a catch-up batch (which iterates without the coordinator's
+    hardcoded 2-minute sleep delta).
+    """
+    import subprocess
+
+    with db.cursor() as cur:
+        cur.execute("TRUNCATE TABLE bot_logs RESTART IDENTITY CASCADE")
+        cur.execute(
+            """
+            INSERT INTO bot_logs (
+                processing_time, files_processed, file_timestamps,
+                batch_start_epoch, batch_end_epoch
+            ) VALUES (
+                0, -1,
+                NOW() - make_interval(secs => %s),
+                EXTRACT(EPOCH FROM NOW() - make_interval(secs => %s))::BIGINT,
+                EXTRACT(EPOCH FROM NOW() - make_interval(secs => %s))::BIGINT
+            )
+            """,
+            (seconds_ago, seconds_ago, seconds_ago),
+        )
+    subprocess.run(
+        [
+            "docker", "compose",
+            "-f", str(REPO_ROOT / "compose" / "docker-compose.yaml"),
+            "--env-file", str(REPO_ROOT / ".env"),
+            "restart", "validation",
+        ],
+        check=True,
+    )
