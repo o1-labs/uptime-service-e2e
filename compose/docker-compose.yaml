@@ -123,3 +123,27 @@ services:
       # Mounted into worker containers; using the system CA bundle is fine
       # for TEST_ENV (the worker only needs Cassandra TLS, which we don't use).
       SSL_CERTFILE: /etc/ssl/certs/ca-certificates.crt
+
+  leaderboard-api:
+    image: ghcr.io/o1-labs/delegation-program-leaderboard-delegation-program-leaderboard-api:${LEADERBOARD_API_TAG:-main-main-49ac4a8}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Historical naming — these are just standard Postgres connection vars.
+      SNARK_HOST: postgres
+      SNARK_PORT: "5432"
+      SNARK_USER: postgres
+      SNARK_PASSWORD: postgres
+      SNARK_DB: delegation_program
+      API_HOST: "0.0.0.0"
+      API_PORT: "5000"
+      CACHE_TIMEOUT: "300"
+      LOGGING_LOCATION: /tmp/app.log
+      SWAGGER_HOST: localhost:${LEADERBOARD_API_HOST_PORT:-55000}
+      DEBUG: "false"
+      LOGGING_LEVEL: INFO
+      DB_CONNECTION_TIMEOUT: "10"
+      DB_RETRY_ATTEMPTS: "3"
+    ports:
+      - "${LEADERBOARD_API_HOST_PORT:-55000}:5000"
