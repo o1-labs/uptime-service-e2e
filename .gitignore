@@ -10,3 +10,8 @@ dist/
 build/
 .coverage
 htmlcov/
+
+# Schema is fetched at `make schema` from uptime-service-validation
+# at the pinned VALIDATION_TAG. Vendoring it here would re-introduce
+# drift between e2e tests and the schema the running image expects.
+compose/config/postgres-init.sql
