@@ -11,6 +11,13 @@ dependencies = [
     "boto3>=1.34",
 ]
 
+[tool.setuptools]
+# This isn't a library, just a test harness — explicitly tell setuptools
+# there are no source packages to install. Without this, the editable
+# install tries to auto-discover packages and trips on `compose/` and
+# `fixtures/` looking like top-level Python packages.
+packages = []
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
