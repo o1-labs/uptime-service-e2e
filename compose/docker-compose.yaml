@@ -1,0 +1,149 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: delegation_program
+    ports:
+      - "${POSTGRES_HOST_PORT:-55432}:5432"
+    volumes:
+      - ./config/postgres-init.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d delegation_program"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio12345
+    ports:
+      - "${MINIO_HOST_PORT:-59000}:9000"
+      - "${MINIO_CONSOLE_HOST_PORT:-59001}:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minio minio12345 &&
+      mc mb --ignore-existing local/${E2E_BUCKET:-test-uptime} &&
+      mc anonymous set public local/${E2E_BUCKET:-test-uptime}
+      "
+
+  backend:
+    image: ghcr.io/o1-labs/uptime-service-backend:${BACKEND_TAG:-latest}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      CONFIG_FILE: /etc/uptime/config.json
+      AWS_ACCESS_KEY_ID: minio
+      AWS_SECRET_ACCESS_KEY: minio12345
+      AWS_ENDPOINT_URL_S3: http://minio:9000
+      AWS_S3_FORCE_PATH_STYLE: "1"
+      AWS_REGION: us-east-1
+    volumes:
+      - ./config/backend.json:/etc/uptime/config.json:ro
+    ports:
+      - "${BACKEND_HOST_PORT:-8080}:8080"
+    command: ["delegation_backend"]
+
+  # Inserts the seed bot_logs row required by the validation coordinator.
+  # mins-ago=5 puts the previous-batch boundary in the past, so the next
+  # batch window covers freshly POSTed submissions.
+  validation-init:
+    image: ghcr.io/o1-labs/uptime-service-validation:${VALIDATION_TAG:-v2.0.8}
+    network_mode: host
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "${POSTGRES_HOST_PORT:-55432}"
+      POSTGRES_DB: delegation_program
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    command: ["poetry", "run", "invoke", "init-database", "--mins-ago", "5"]
+
+  validation:
+    image: ghcr.io/o1-labs/uptime-service-validation:${VALIDATION_TAG:-v2.0.8}
+    # Host network so the worker containers (spawned via DinD with --network host)
+    # share addressing with the coordinator. Both reach postgres + minio via
+    # localhost:<published-port>.
+    network_mode: host
+    depends_on:
+      validation-init:
+        condition: service_completed_successfully
+      backend:
+        condition: service_started
+    volumes:
+      # DinD: coordinator spawns worker containers via the host docker daemon.
+      # The image bundles its own docker CLI as of validation v2.0.9.
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      TEST_ENV: "1"
+      IGNORE_APPLICATION_STATUS: "1"
+      SUBMISSION_STORAGE: POSTGRES
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "${POSTGRES_HOST_PORT:-55432}"
+      POSTGRES_DB: delegation_program
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_SSLMODE: disable
+      WORKER_IMAGE: ghcr.io/o1-labs/submission-updater
+      WORKER_TAG: ${WORKER_TAG:-main-97163be}
+      NETWORK_NAME: e2e
+      AWS_S3_BUCKET: ${E2E_BUCKET:-test-uptime}
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: minio
+      AWS_SECRET_ACCESS_KEY: minio12345
+      AWS_ENDPOINT_URL_S3: http://localhost:${MINIO_HOST_PORT:-59000}
+      SURVEY_INTERVAL_MINUTES: "1"
+      MINI_BATCH_NUMBER: "1"
+      RETRY_COUNT: "1"
+      # Skip heavy block verification — without it the worker can take
+      # several minutes per submission, blowing past test deadlines. e2e
+      # is a plumbing test, not a consensus correctness test.
+      NO_CHECKS: "1"
+      WORKER_TTL_SECONDS_AFTER_FINISHED: "60"
+      # Mounted into worker containers; using the system CA bundle is fine
+      # for TEST_ENV (the worker only needs Cassandra TLS, which we don't use).
+      SSL_CERTFILE: /etc/ssl/certs/ca-certificates.crt
+
+  leaderboard-api:
+    image: ghcr.io/o1-labs/delegation-program-leaderboard-delegation-program-leaderboard-api:${LEADERBOARD_API_TAG:-main-main-49ac4a8}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Historical naming — these are just standard Postgres connection vars.
+      SNARK_HOST: postgres
+      SNARK_PORT: "5432"
+      SNARK_USER: postgres
+      SNARK_PASSWORD: postgres
+      SNARK_DB: delegation_program
+      API_HOST: "0.0.0.0"
+      API_PORT: "5000"
+      CACHE_TIMEOUT: "300"
+      LOGGING_LOCATION: /tmp/app.log
+      SWAGGER_HOST: localhost:${LEADERBOARD_API_HOST_PORT:-55000}
+      DEBUG: "false"
+      LOGGING_LEVEL: INFO
+      DB_CONNECTION_TIMEOUT: "10"
+      DB_RETRY_ATTEMPTS: "3"
+    ports:
+      - "${LEADERBOARD_API_HOST_PORT:-55000}:5000"

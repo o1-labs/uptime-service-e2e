@@ -1,0 +1,20 @@
+{
+  "network_name": "e2e",
+  "delegation_whitelist_disabled": true,
+  "verify_signature_disabled": true,
+  "aws": {
+    "account_id": "test",
+    "bucket_name_suffix": "uptime",
+    "region": "us-east-1",
+    "access_key_id": "minio",
+    "secret_access_key": "minio12345"
+  },
+  "postgresql": {
+    "host": "postgres",
+    "port": 5432,
+    "user": "postgres",
+    "password": "postgres",
+    "database": "delegation_program",
+    "sslmode": "disable"
+  }
+}
