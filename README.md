@@ -20,10 +20,11 @@ Out of scope:
 ```
 .
 ├── compose/
-│   ├── docker-compose.yaml   # postgres + minio + backend
+│   ├── docker-compose.yaml   # postgres + minio + backend + validation + leaderboard
 │   └── config/
 │       ├── backend.json      # CONFIG_FILE for the backend
-│       └── postgres-init.sql # schema (copy of validation repo's create_tables.sql)
+│       └── postgres-init.sql # fetched at `make schema` from validation@VALIDATION_TAG
+                              # (gitignored — never vendored, never drifts)
 ├── fixtures/                 # canned submission payloads
 ├── tests/                    # pytest harness
 ├── Makefile
