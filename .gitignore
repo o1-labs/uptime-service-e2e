@@ -15,3 +15,7 @@ htmlcov/
 # at the pinned VALIDATION_TAG. Vendoring it here would re-introduce
 # drift between e2e tests and the schema the running image expects.
 compose/config/postgres-init.sql
+
+# Copied into the worker image build context at `make worker-image`;
+# the real source-of-truth lives in fixtures/minimina/.
+compose/worker/genesis_ledger.json

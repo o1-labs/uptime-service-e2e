@@ -1,4 +1,3 @@
-import json
 import os
 import time
 from pathlib import Path
@@ -9,7 +8,6 @@ import pytest
 import requests
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-FIXTURES_DIR = REPO_ROOT / "fixtures"
 
 
 @pytest.fixture(scope="session")
@@ -77,72 +75,3 @@ def db(postgres_dsn):
         yield conn
     finally:
         conn.close()
-
-
-@pytest.fixture
-def canned_submission():
-    with (FIXTURES_DIR / "req-no-snark.json").open() as f:
-        return json.load(f)
-
-
-@pytest.fixture
-def clean_state(db, s3, s3_bucket, s3_prefix):
-    """Reset Postgres + S3 to a known empty state before each test that uses it.
-
-    Without this, leftover rows/objects from earlier runs make per-test
-    assertions ambiguous. Each test owns its own bucket prefix slice.
-    """
-    with db.cursor() as cur:
-        cur.execute("TRUNCATE TABLE submissions RESTART IDENTITY")
-        # bot_logs has FK from points/points_summary/bot_logs_statehash, so cascade
-        cur.execute("TRUNCATE TABLE bot_logs RESTART IDENTITY CASCADE")
-    paginator = s3.get_paginator("list_objects_v2")
-    keys = [
-        {"Key": obj["Key"]}
-        for page in paginator.paginate(Bucket=s3_bucket, Prefix=f"{s3_prefix}/")
-        for obj in page.get("Contents", [])
-    ]
-    if keys:
-        s3.delete_objects(Bucket=s3_bucket, Delete={"Objects": keys})
-
-
-def reset_bot_logs(db, seconds_ago: int = 120):
-    """Reset the validation coordinator's batch progress and force it to re-read.
-
-    The coordinator caches `bot_logs` state in memory and doesn't re-poll
-    between iterations, so simply rewriting the table is invisible to a
-    running coordinator. Restart the validation container after rewriting
-    so its next loop reads the fresh boundary.
-
-    `seconds_ago` should be > SURVEY_INTERVAL_MINUTES * 60 so the next
-    batch window overlaps "now," guaranteeing in-flight submissions land
-    in a catch-up batch (which iterates without the coordinator's
-    hardcoded 2-minute sleep delta).
-    """
-    import subprocess
-
-    with db.cursor() as cur:
-        cur.execute("TRUNCATE TABLE bot_logs RESTART IDENTITY CASCADE")
-        cur.execute(
-            """
-            INSERT INTO bot_logs (
-                processing_time, files_processed, file_timestamps,
-                batch_start_epoch, batch_end_epoch
-            ) VALUES (
-                0, -1,
-                NOW() - make_interval(secs => %s),
-                EXTRACT(EPOCH FROM NOW() - make_interval(secs => %s))::BIGINT,
-                EXTRACT(EPOCH FROM NOW() - make_interval(secs => %s))::BIGINT
-            )
-            """,
-            (seconds_ago, seconds_ago, seconds_ago),
-        )
-    subprocess.run(
-        [
-            "docker", "compose",
-            "-f", str(REPO_ROOT / "compose" / "docker-compose.yaml"),
-            "--env-file", str(REPO_ROOT / ".env"),
-            "restart", "validation",
-        ],
-        check=True,
-    )

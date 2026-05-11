@@ -1,3 +1,15 @@
+# Shared external network with the sibling docker-compose project minimina
+# manages (mina seed/BPs/snark). Created by `make net` before either
+# compose stack comes up. The mina BPs target the hostname
+# `uptime-service-backend-e2e` (baked into minimina's generated compose
+# from the topology's Uptime_service_backend node name + network-id), so
+# we expose our backend under that alias on this network.
+networks:
+  default:
+  uptime-e2e:
+    external: true
+    name: uptime-e2e-net
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -61,12 +73,20 @@ services:
     ports:
       - "${BACKEND_HOST_PORT:-8080}:8080"
     command: ["delegation_backend"]
+    networks:
+      default: {}
+      # Alias matches the hostname minimina bakes into BP command lines
+      # (uptime-service-backend node name + network-id "e2e"). Without this
+      # the BPs would NXDOMAIN and never submit anything.
+      uptime-e2e:
+        aliases:
+          - uptime-service-backend-e2e
 
   # Inserts the seed bot_logs row required by the validation coordinator.
   # mins-ago=5 puts the previous-batch boundary in the past, so the next
   # batch window covers freshly POSTed submissions.
   validation-init:
-    image: ghcr.io/o1-labs/uptime-service-validation:${VALIDATION_TAG:-v2.0.8}
+    image: ghcr.io/o1-labs/uptime-service-validation:${VALIDATION_TAG:-v2.0.10}
     network_mode: host
     depends_on:
       postgres:
@@ -80,7 +100,7 @@ services:
     command: ["poetry", "run", "invoke", "init-database", "--mins-ago", "5"]
 
   validation:
-    image: ghcr.io/o1-labs/uptime-service-validation:${VALIDATION_TAG:-v2.0.8}
+    image: ghcr.io/o1-labs/uptime-service-validation:${VALIDATION_TAG:-v2.0.10}
     # Host network so the worker containers (spawned via DinD with --network host)
     # share addressing with the coordinator. Both reach postgres + minio via
     # localhost:<published-port>.
@@ -104,21 +124,25 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_SSLMODE: disable
-      WORKER_IMAGE: ghcr.io/o1-labs/submission-updater
-      WORKER_TAG: ${WORKER_TAG:-main-97163be}
+      # Locally-built submission-updater wrapper that bakes our minimina
+      # genesis into /etc/uptime-e2e/genesis_ledger.json + sets
+      # GENESIS_LEDGER_FILE — see compose/worker/Dockerfile. Built by
+      # `make worker-image` before `make up`.
+      WORKER_IMAGE: ${WORKER_IMAGE:-uptime-e2e-worker}
+      WORKER_TAG: ${WORKER_TAG:-dev}
+      # Path component for blocks in MinIO: backend writes to
+      # s3://${E2E_BUCKET}/${NETWORK_NAME}/blocks/<hash>.dat and the
+      # verifier (via submission-updater) downloads from the same path.
       NETWORK_NAME: e2e
       AWS_S3_BUCKET: ${E2E_BUCKET:-test-uptime}
       AWS_REGION: us-east-1
       AWS_ACCESS_KEY_ID: minio
       AWS_SECRET_ACCESS_KEY: minio12345
       AWS_ENDPOINT_URL_S3: http://localhost:${MINIO_HOST_PORT:-59000}
+      AWS_S3_FORCE_PATH_STYLE: "1"
       SURVEY_INTERVAL_MINUTES: "1"
       MINI_BATCH_NUMBER: "1"
       RETRY_COUNT: "1"
-      # Skip heavy block verification — without it the worker can take
-      # several minutes per submission, blowing past test deadlines. e2e
-      # is a plumbing test, not a consensus correctness test.
-      NO_CHECKS: "1"
       WORKER_TTL_SECONDS_AFTER_FINISHED: "60"
       # Mounted into worker containers; using the system CA bundle is fine
       # for TEST_ENV (the worker only needs Cassandra TLS, which we don't use).

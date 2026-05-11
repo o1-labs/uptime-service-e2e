@@ -9,6 +9,9 @@ dependencies = [
     "requests>=2.31",
     "psycopg2-binary>=2.9",
     "boto3>=1.34",
+    # Used by scripts/patch_minimina_compose.py to rewrite the
+    # docker-compose.yaml minimina emits.
+    "PyYAML>=6.0",
 ]
 
 [tool.setuptools]

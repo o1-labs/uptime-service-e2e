@@ -11,7 +11,10 @@ on:
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 40 min covers a full minimina bootstrap (~5–10 min for mina-daemons
+    # to sync + first block window) plus the validation + leaderboard
+    # poll loops. Tighten only after we have stable historical timings.
+    timeout-minutes: 50
 
     steps:
       - name: 📥 Checkout
@@ -32,6 +35,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: 📦 Install minimina
+        uses: MinaFoundation/install-minimina-action@v1
+        with:
+          stream: stable
+
       - name: ⚙️ Install Python dependencies
         run: pip install -e .
 
@@ -41,11 +49,17 @@ jobs:
       - name: 🧪 Run e2e suite
         run: make test
 
-      - name: 📜 Dump compose logs on failure
+      - name: 📜 Dump compose + minimina logs on failure
         if: failure()
         run: |
           cp .env.example .env  # noop if exists; defensive
-          docker compose -f compose/docker-compose.yaml --env-file .env logs --tail 300 || true
+          docker compose -f compose/docker-compose.yaml --env-file .env logs --tail 500 || true
+          echo "===== minimina ====="
+          minimina --mode docker network status -n e2e || true
+          for c in default-seed-e2e node-a-e2e node-b-e2e node-c-e2e snark-node-e2e; do
+            echo "--- $c ---"
+            docker logs --tail 200 "$c" 2>&1 || true
+          done
 
       - name: 🧹 Tear down
         if: always()
