@@ -75,3 +75,61 @@ def db(postgres_dsn):
         yield conn
     finally:
         conn.close()
+
+
+def _dump_db_snapshot(dsn: str) -> str:
+    """Quick snapshot of the validation-relevant tables, for failure triage."""
+    queries = [
+        ("submissions count + verified breakdown",
+         "SELECT verified, validation_error IS NOT NULL AS has_error, count(*) "
+         "FROM submissions GROUP BY 1, 2 ORDER BY 1, 2"),
+        ("latest 5 submissions (verification fields)",
+         "SELECT submitter, block_hash, verified, validation_error "
+         "FROM submissions ORDER BY id DESC LIMIT 5"),
+        ("nodes",
+         "SELECT id, block_producer_key, score, score_percent FROM nodes"),
+        ("points count by node",
+         "SELECT node_id, count(*) FROM points GROUP BY 1 ORDER BY 1"),
+        ("score_history count", "SELECT count(*) FROM score_history"),
+        ("bot_logs latest 3", "SELECT id, files_processed, batch_start_epoch, "
+         "batch_end_epoch FROM bot_logs ORDER BY id DESC LIMIT 3"),
+    ]
+    out = ["\n===== POSTGRES SNAPSHOT ====="]
+    try:
+        with psycopg2.connect(dsn) as conn:
+            with conn.cursor() as cur:
+                for label, sql in queries:
+                    out.append(f"\n-- {label} --")
+                    try:
+                        cur.execute(sql)
+                        rows = cur.fetchall()
+                        if not rows:
+                            out.append("  (empty)")
+                        else:
+                            for r in rows:
+                                out.append(f"  {r}")
+                    except Exception as e:
+                        out.append(f"  ERROR: {e}")
+    except Exception as e:
+        out.append(f"\nconnection failed: {e}")
+    return "\n".join(out)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """When a test fails, attach a Postgres state dump to the report.
+
+    Validation correctness depends on a chain of triggers + cross-table state,
+    so per-test snapshots are far more useful than digging through validation
+    container logs after the fact.
+    """
+    outcome = yield
+    report = outcome.get_result()
+    if report.when == "call" and report.failed:
+        dsn = os.environ.get(
+            "POSTGRES_DSN",
+            "host=localhost port=55432 user=postgres password=postgres "
+            "dbname=delegation_program sslmode=disable",
+        )
+        snapshot = _dump_db_snapshot(dsn)
+        report.sections.append(("Postgres snapshot at failure", snapshot))

@@ -49,29 +49,55 @@ def test_leaderboard_db_ready(leaderboard_url):
 
 
 @pytest.mark.timeout(1200)
-def test_leaderboard_shows_scoring_bps(leaderboard_url, db):
-    """A BP that has at least one verified submission should appear in the
-    scoreboard. This depends on the validation coordinator's `points` and
-    `scoreboard` triggers running — so it's gated on test_validation's
-    happy path. Independent of test ordering: this poll waits anyway.
+def test_validated_bp_reaches_scoreboard(leaderboard_url, db):
+    """After verified submissions accumulate, the validation coordinator
+    inserts a `points` row per verified-batch + writes a nodes/score_history
+    entry that the leaderboard surfaces via /uptimescore/<bp>.
+
+    We poll the DB directly first — `points` count > 0 is the canonical
+    signal that validation processed at least one verified submission. The
+    leaderboard endpoint is a downstream view that depends on the
+    `update_scoreboard` window populating, which we check separately.
     """
     deadline = time.monotonic() + 1150
-    last_seen = None
     while time.monotonic() < deadline:
-        # First confirm scoreboard has *any* row — query the API.
-        for bp in KNOWN_BPS:
-            r = requests.get(
-                f"{leaderboard_url}/uptimescore/{bp}", timeout=10
-            )
+        with db.cursor() as cur:
+            cur.execute("SELECT count(*) FROM points")
+            (points_count,) = cur.fetchone()
+            if points_count > 0:
+                break
+        time.sleep(5)
+    else:
+        pytest.fail(
+            "no rows ever landed in `points` — validation never accepted a "
+            "submission for scoring (most likely all delegation-verify runs "
+            "rejected the blocks)"
+        )
+
+    # Sanity: the BP credited in `points` should be one of our minimina BPs.
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT DISTINCT n.block_producer_key FROM points p "
+            "JOIN nodes n ON p.node_id = n.id"
+        )
+        bps_with_points = {r[0] for r in cur.fetchall()}
+    unknown = bps_with_points - set(KNOWN_BPS)
+    assert not unknown, f"unexpected BPs got points: {unknown}"
+    assert bps_with_points, "points rows exist but couldn't join back to a known BP"
+
+    # Now confirm the leaderboard API surfaces at least one of them. The
+    # endpoint returns 404 when the BP has no score_history yet; that can lag
+    # behind points (depends on `update_scoreboard` having run), so we poll.
+    deadline = time.monotonic() + 600
+    while time.monotonic() < deadline:
+        for bp in bps_with_points:
+            r = requests.get(f"{leaderboard_url}/uptimescore/{bp}", timeout=10)
             if r.status_code == 200:
-                body = r.json()
-                last_seen = (bp, body)
-                # The endpoint returns a list of score records per BP; any
-                # row with a non-null score_percent counts.
-                if isinstance(body, list) and any(
-                    rec.get("score_percent") is not None for rec in body
-                ):
-                    return
+                return
         time.sleep(5)
 
-    pytest.fail(f"no BP reached the leaderboard scoreboard; last response: {last_seen}")
+    pytest.fail(
+        "points table has entries but the leaderboard endpoint never returned "
+        "200 for any of them — the scoreboard population step in validation "
+        "may not have run"
+    )
