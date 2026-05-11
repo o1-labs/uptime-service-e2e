@@ -90,7 +90,7 @@ down:
 	-docker network rm $(SHARED_NET)
 
 test:
-	pytest
+	pytest -s -v
 
 logs:
 	$(COMPOSE) logs -f

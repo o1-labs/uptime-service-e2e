@@ -50,6 +50,23 @@ jobs:
       - name: 🚀 Bring up SUT stack
         run: make up
 
+      - name: 🩺 Snapshot container state pre-test
+        run: |
+          docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
+          echo "--- networks ---"
+          docker network ls
+          echo "--- node-a-e2e logs (tail) ---"
+          docker logs --tail 50 node-a-e2e 2>&1 || true
+
+      # Stream a couple of BPs' logs in the background so the action log
+      # has live visibility into mina-daemon bootstrap and block
+      # production while pytest blocks on its long polls.
+      - name: 📡 Stream mina logs in background
+        run: |
+          (docker logs -f node-a-e2e 2>&1 | sed 's/^/[node-a] /') &
+          (docker logs -f default-seed-e2e 2>&1 | sed 's/^/[seed] /') &
+          echo $! > /tmp/log-stream.pid
+
       - name: 🧪 Run e2e suite
         run: make test
 
