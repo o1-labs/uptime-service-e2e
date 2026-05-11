@@ -38,6 +38,10 @@ jobs:
       - name: 📦 Install minimina
         uses: MinaFoundation/install-minimina-action@v1
         with:
+          # @v1's default codename is "ubuntu" which doesn't exist on the
+          # apt repo — supported are bullseye/focal/jammy/noble/bookworm.
+          # ubuntu-latest is noble.
+          codename: noble
           stream: stable
 
       - name: ⚙️ Install Python dependencies
