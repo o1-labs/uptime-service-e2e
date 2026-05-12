@@ -23,12 +23,13 @@ on:
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    # 60 min: a fresh minimina bootstrap on small-network constants
+    # 75 min: a fresh minimina bootstrap on small-network constants
     # (k=20, 2-min slots — see fixtures/minimina/genesis_ledger.json) has
     # been observed to take up to 30 min on slower shared runners. The
-    # `first_submission_arrived` session fixture allows up to 30 min for
-    # that, plus ~10 min for validation + ~10 min for scoreboard.
-    timeout-minutes: 60
+    # `first_submission_arrived` session fixture allows up to 35 min for
+    # that, plus ~10 min for validation + ~10 min for scoreboard, plus
+    # ~10 min for setup/image pull/teardown.
+    timeout-minutes: 75
 
     steps:
       - name: 📥 Checkout

@@ -125,8 +125,11 @@ def first_submission_arrived(backend_ready, postgres_dsn):
     bootstrap. Doing the wait once at session scope amortizes the cost:
     the first dependent test pays it, the rest see rows already there
     and assert in seconds.
+
+    Note: pyproject.toml sets `timeout_func_only = true` so the per-test
+    pytest-timeout marker doesn't kill this fixture during setup.
     """
-    deadline = time.monotonic() + 1800
+    deadline = time.monotonic() + 2100
     last_count = 0
     while time.monotonic() < deadline:
         try:
