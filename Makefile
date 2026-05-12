@@ -1,4 +1,4 @@
-.PHONY: install up down test logs clean ps schema env net worker-image minimina-up minimina-down wait-for-blocks
+.PHONY: install up down test logs clean ps schema env net worker-image minimina-up minimina-down wait-for-blocks genesis-fresh
 
 COMPOSE := docker compose -f compose/docker-compose.yaml --env-file .env
 SCHEMA_PATH := compose/config/postgres-init.sql
@@ -21,6 +21,13 @@ export MINIMINA_HOME
 # `minimina` calls below run from the repo root.
 TOPOLOGY := fixtures/minimina/topology.json
 GENESIS := fixtures/minimina/genesis_ledger.json
+# Derived genesis with genesis_state_timestamp rewritten to ~now. The
+# vendored file has a fixed 2023-10-16 timestamp; running it directly
+# means daemons try to catch up multiple years of empty slots before
+# they ever go Synced, which on slow CI runners breaches our wait
+# budget. Both minimina and the bundled delegation-verify worker have
+# to see the same genesis, so we materialize it once here.
+GENESIS_BUILD := $(MINIMINA_HOME)/genesis_ledger.json
 
 WORKER_LOCAL_IMAGE := uptime-e2e-worker
 WORKER_LOCAL_TAG := dev
@@ -45,16 +52,34 @@ net:
 	@docker network inspect $(SHARED_NET) >/dev/null 2>&1 || \
 		docker network create $(SHARED_NET)
 
+# Rewrite genesis_state_timestamp to ~1 minute ago so the network starts
+# at slot 0 rather than catching up years of empty slots. Generated
+# idempotently: worker-image and minimina-up both pull this in, and `up`
+# launches minimina-up via a recursive `$(MAKE)`, so if we regenerated
+# unconditionally the worker image and the daemons would see *different*
+# genesis timestamps, the protocol state hashes wouldn't match, and
+# delegation-verify would reject every block. `make down` removes the
+# file so the next session starts fresh.
+genesis-fresh:
+	@mkdir -p $(MINIMINA_HOME)
+	@if [ ! -f $(GENESIS_BUILD) ]; then \
+		python3 -c "import json, datetime; \
+g = json.load(open('$(GENESIS)')); \
+g['genesis']['genesis_state_timestamp'] = (datetime.datetime.utcnow() - datetime.timedelta(minutes=1)).strftime('%Y-%m-%d %H:%M:%S.%fZ'); \
+json.dump(g, open('$(GENESIS_BUILD)', 'w'), indent=2)"; \
+		echo "genesis_state_timestamp -> $$(python3 -c "import json; print(json.load(open('$(GENESIS_BUILD)'))['genesis']['genesis_state_timestamp'])")"; \
+	fi
+
 # Bake our minimina-network genesis into the submission-updater image
 # under a known path. The validation coordinator doesn't pass arbitrary
 # volume mounts or env to DinD-spawned workers, so the genesis has to
 # live inside the image. See compose/worker/Dockerfile for context.
-worker-image:
-	cp $(GENESIS) compose/worker/genesis_ledger.json
+worker-image: genesis-fresh
+	cp $(GENESIS_BUILD) compose/worker/genesis_ledger.json
 	docker build -t $(WORKER_LOCAL_IMAGE):$(WORKER_LOCAL_TAG) compose/worker
 
-minimina-up: net
-	minimina --mode docker network create -n $(MINIMINA_NET) -t $(TOPOLOGY) -g $(GENESIS)
+minimina-up: net genesis-fresh
+	minimina --mode docker network create -n $(MINIMINA_NET) -t $(TOPOLOGY) -g $(GENESIS_BUILD)
 	# Drop the placeholder uptime-service-backend service we only kept in
 	# the topology so minimina would bake `--uptime-url` into the BPs.
 	# Our compose stack runs the real backend; we wire BPs to it via the
@@ -88,6 +113,7 @@ down:
 	-$(MAKE) minimina-down
 	$(COMPOSE) down -v
 	-docker network rm $(SHARED_NET)
+	-rm -f $(GENESIS_BUILD)
 
 test:
 	pytest -s -v
