@@ -11,7 +11,11 @@ on:
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # ~50 min covers a full minimina bootstrap on the small-network
+    # protocol constants (k=20, 2-min slots — see
+    # fixtures/minimina/genesis_ledger.json) plus validation + leaderboard
+    # poll loops. Bump only if historical timings drift longer.
+    timeout-minutes: 50
 
     steps:
       - name: 📥 Checkout
@@ -32,20 +36,47 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: 📦 Install minimina
+        # MinaFoundation/install-minimina-action@v1 hardcodes the apt
+        # codename to "ubuntu" (broken — that component was retired). The
+        # o1-labs fork adds a `codename` input; use it.
+        uses: o1-labs/install-minimina-action@v1
+        with:
+          codename: noble
+          stream: stable
+
       - name: ⚙️ Install Python dependencies
         run: pip install -e .
 
       - name: 🚀 Bring up SUT stack
         run: make up
 
+      - name: 🩺 Snapshot container state pre-test
+        run: |
+          docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
+          echo "--- networks ---"
+          docker network ls
+          echo "--- node-a-e2e logs (tail) ---"
+          docker logs --tail 50 node-a-e2e 2>&1 || true
+
       - name: 🧪 Run e2e suite
+        # `make test` runs pytest with -s -v so test names and assertions
+        # stream live. Dedicated `docker logs -f` background streaming
+        # would blow past GitHub's 4 MB per-step log budget in a multi-hour
+        # run; the post-failure dump step below covers the diagnostic case.
         run: make test
 
-      - name: 📜 Dump compose logs on failure
+      - name: 📜 Dump compose + minimina logs on failure
         if: failure()
         run: |
           cp .env.example .env  # noop if exists; defensive
-          docker compose -f compose/docker-compose.yaml --env-file .env logs --tail 300 || true
+          docker compose -f compose/docker-compose.yaml --env-file .env logs --tail 500 || true
+          echo "===== minimina ====="
+          minimina --mode docker network status -n e2e || true
+          for c in default-seed-e2e node-a-e2e node-b-e2e node-c-e2e snark-node-e2e; do
+            echo "--- $c ---"
+            docker logs --tail 200 "$c" 2>&1 || true
+          done
 
       - name: 🧹 Tear down
         if: always()

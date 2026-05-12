@@ -1,7 +1,6 @@
 {
   "network_name": "e2e",
   "delegation_whitelist_disabled": true,
-  "verify_signature_disabled": true,
   "aws": {
     "account_id": "test",
     "bucket_name_suffix": "uptime",

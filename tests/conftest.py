@@ -1,4 +1,3 @@
-import json
 import os
 import time
 from pathlib import Path
@@ -9,7 +8,6 @@ import pytest
 import requests
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-FIXTURES_DIR = REPO_ROOT / "fixtures"
 
 
 @pytest.fixture(scope="session")
@@ -79,70 +77,59 @@ def db(postgres_dsn):
         conn.close()
 
 
-@pytest.fixture
-def canned_submission():
-    with (FIXTURES_DIR / "req-no-snark.json").open() as f:
-        return json.load(f)
-
-
-@pytest.fixture
-def clean_state(db, s3, s3_bucket, s3_prefix):
-    """Reset Postgres + S3 to a known empty state before each test that uses it.
-
-    Without this, leftover rows/objects from earlier runs make per-test
-    assertions ambiguous. Each test owns its own bucket prefix slice.
-    """
-    with db.cursor() as cur:
-        cur.execute("TRUNCATE TABLE submissions RESTART IDENTITY")
-        # bot_logs has FK from points/points_summary/bot_logs_statehash, so cascade
-        cur.execute("TRUNCATE TABLE bot_logs RESTART IDENTITY CASCADE")
-    paginator = s3.get_paginator("list_objects_v2")
-    keys = [
-        {"Key": obj["Key"]}
-        for page in paginator.paginate(Bucket=s3_bucket, Prefix=f"{s3_prefix}/")
-        for obj in page.get("Contents", [])
+def _dump_db_snapshot(dsn: str) -> str:
+    """Quick snapshot of the validation-relevant tables, for failure triage."""
+    queries = [
+        ("submissions count + verified breakdown",
+         "SELECT verified, validation_error IS NOT NULL AS has_error, count(*) "
+         "FROM submissions GROUP BY 1, 2 ORDER BY 1, 2"),
+        ("latest 5 submissions (verification fields)",
+         "SELECT submitter, block_hash, verified, validation_error "
+         "FROM submissions ORDER BY id DESC LIMIT 5"),
+        ("nodes",
+         "SELECT id, block_producer_key, score, score_percent FROM nodes"),
+        ("points count by node",
+         "SELECT node_id, count(*) FROM points GROUP BY 1 ORDER BY 1"),
+        ("score_history count", "SELECT count(*) FROM score_history"),
+        ("bot_logs latest 3", "SELECT id, files_processed, batch_start_epoch, "
+         "batch_end_epoch FROM bot_logs ORDER BY id DESC LIMIT 3"),
     ]
-    if keys:
-        s3.delete_objects(Bucket=s3_bucket, Delete={"Objects": keys})
+    out = ["\n===== POSTGRES SNAPSHOT ====="]
+    try:
+        with psycopg2.connect(dsn) as conn:
+            with conn.cursor() as cur:
+                for label, sql in queries:
+                    out.append(f"\n-- {label} --")
+                    try:
+                        cur.execute(sql)
+                        rows = cur.fetchall()
+                        if not rows:
+                            out.append("  (empty)")
+                        else:
+                            for r in rows:
+                                out.append(f"  {r}")
+                    except Exception as e:
+                        out.append(f"  ERROR: {e}")
+    except Exception as e:
+        out.append(f"\nconnection failed: {e}")
+    return "\n".join(out)
 
 
-def reset_bot_logs(db, seconds_ago: int = 120):
-    """Reset the validation coordinator's batch progress and force it to re-read.
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """When a test fails, attach a Postgres state dump to the report.
 
-    The coordinator caches `bot_logs` state in memory and doesn't re-poll
-    between iterations, so simply rewriting the table is invisible to a
-    running coordinator. Restart the validation container after rewriting
-    so its next loop reads the fresh boundary.
-
-    `seconds_ago` should be > SURVEY_INTERVAL_MINUTES * 60 so the next
-    batch window overlaps "now," guaranteeing in-flight submissions land
-    in a catch-up batch (which iterates without the coordinator's
-    hardcoded 2-minute sleep delta).
+    Validation correctness depends on a chain of triggers + cross-table state,
+    so per-test snapshots are far more useful than digging through validation
+    container logs after the fact.
     """
-    import subprocess
-
-    with db.cursor() as cur:
-        cur.execute("TRUNCATE TABLE bot_logs RESTART IDENTITY CASCADE")
-        cur.execute(
-            """
-            INSERT INTO bot_logs (
-                processing_time, files_processed, file_timestamps,
-                batch_start_epoch, batch_end_epoch
-            ) VALUES (
-                0, -1,
-                NOW() - make_interval(secs => %s),
-                EXTRACT(EPOCH FROM NOW() - make_interval(secs => %s))::BIGINT,
-                EXTRACT(EPOCH FROM NOW() - make_interval(secs => %s))::BIGINT
-            )
-            """,
-            (seconds_ago, seconds_ago, seconds_ago),
+    outcome = yield
+    report = outcome.get_result()
+    if report.when == "call" and report.failed:
+        dsn = os.environ.get(
+            "POSTGRES_DSN",
+            "host=localhost port=55432 user=postgres password=postgres "
+            "dbname=delegation_program sslmode=disable",
         )
-    subprocess.run(
-        [
-            "docker", "compose",
-            "-f", str(REPO_ROOT / "compose" / "docker-compose.yaml"),
-            "--env-file", str(REPO_ROOT / ".env"),
-            "restart", "validation",
-        ],
-        check=True,
-    )
+        snapshot = _dump_db_snapshot(dsn)
+        report.sections.append(("Postgres snapshot at failure", snapshot))
