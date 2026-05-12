@@ -11,10 +11,14 @@ on:
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    # 40 min covers a full minimina bootstrap (~5–10 min for mina-daemons
-    # to sync + first block window) plus the validation + leaderboard
-    # poll loops. Tighten only after we have stable historical timings.
-    timeout-minutes: 50
+    # 3-hour budget covers a full minimina bootstrap under production
+    # protocol constants (k=290, slots_per_epoch=7140, 3-min block window
+    # — see fixtures/minimina/genesis_ledger.json for why those values).
+    # First block typically lands 10–20 min in, then ~3 min per block, so
+    # full pipeline (submissions → validation → points → scoreboard) often
+    # takes 45–90 min wall-clock. Tighten only after we have stable
+    # historical timings.
+    timeout-minutes: 180
 
     steps:
       - name: 📥 Checkout
@@ -58,16 +62,11 @@ jobs:
           echo "--- node-a-e2e logs (tail) ---"
           docker logs --tail 50 node-a-e2e 2>&1 || true
 
-      # Stream a couple of BPs' logs in the background so the action log
-      # has live visibility into mina-daemon bootstrap and block
-      # production while pytest blocks on its long polls.
-      - name: 📡 Stream mina logs in background
-        run: |
-          (docker logs -f node-a-e2e 2>&1 | sed 's/^/[node-a] /') &
-          (docker logs -f default-seed-e2e 2>&1 | sed 's/^/[seed] /') &
-          echo $! > /tmp/log-stream.pid
-
       - name: 🧪 Run e2e suite
+        # `make test` runs pytest with -s -v so test names and assertions
+        # stream live. Dedicated `docker logs -f` background streaming
+        # would blow past GitHub's 4 MB per-step log budget in a multi-hour
+        # run; the post-failure dump step below covers the diagnostic case.
         run: make test
 
       - name: 📜 Dump compose + minimina logs on failure

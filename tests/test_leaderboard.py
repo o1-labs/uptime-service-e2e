@@ -48,7 +48,7 @@ def test_leaderboard_db_ready(leaderboard_url):
     assert response.status_code == 200, response.text
 
 
-@pytest.mark.timeout(1200)
+@pytest.mark.timeout(3600)
 def test_validated_bp_reaches_scoreboard(leaderboard_url, db):
     """After verified submissions accumulate, the validation coordinator
     inserts a `points` row per verified-batch + writes a nodes/score_history
@@ -59,14 +59,14 @@ def test_validated_bp_reaches_scoreboard(leaderboard_url, db):
     leaderboard endpoint is a downstream view that depends on the
     `update_scoreboard` window populating, which we check separately.
     """
-    deadline = time.monotonic() + 1150
+    deadline = time.monotonic() + 3000
     while time.monotonic() < deadline:
         with db.cursor() as cur:
             cur.execute("SELECT count(*) FROM points")
             (points_count,) = cur.fetchone()
             if points_count > 0:
                 break
-        time.sleep(5)
+        time.sleep(15)
     else:
         pytest.fail(
             "no rows ever landed in `points` — validation never accepted a "
@@ -94,7 +94,7 @@ def test_validated_bp_reaches_scoreboard(leaderboard_url, db):
             r = requests.get(f"{leaderboard_url}/uptimescore/{bp}", timeout=10)
             if r.status_code == 200:
                 return
-        time.sleep(5)
+        time.sleep(15)
 
     pytest.fail(
         "points table has entries but the leaderboard endpoint never returned "

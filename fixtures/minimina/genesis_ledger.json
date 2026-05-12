@@ -3,19 +3,20 @@
         "txpool_max_size": 3000
     },
     "genesis": {
-        "k": 20,
+        "_comment": "Protocol constants match the compile-time devnet/mainnet profile (src/lib/node_config/profiled/mainnet.ml on the compatible branch). The verifier binary's compiled-in genesis_constants hardcode these values; mismatch causes Pickles.verify dlog_check failures. See PR thread on uptime-service-e2e for the diagnostic chain.",
+        "k": 290,
         "delta": 0,
-        "slots_per_epoch": 480,
-        "grace_period_slots": 150,
-        "slots_per_sub_window": 2,
-        "genesis_state_timestamp": "2023-10-16 12:00:03.092497Z"
+        "slots_per_epoch": 7140,
+        "slots_per_sub_window": 7,
+        "grace_period_slots": 2160,
+        "genesis_state_timestamp": "2025-01-01T00:00:00Z"
     },
     "proof": {
         "level": "full",
-        "work_delay": 1,
-        "block_window_duration_ms": 120000,
+        "work_delay": 2,
+        "block_window_duration_ms": 180000,
         "transaction_capacity": {
-            "2_to_the": 2
+            "2_to_the": 7
         }
     },
     "ledger": {

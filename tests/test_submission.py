@@ -5,9 +5,11 @@ sibling minimina network produce blocks, sign submissions with their
 genesis-ledger BP keys, and POST to backend:8080. We just poll for them
 to arrive.
 
-Slow side: mina-daemons take ~3–7 min to bootstrap, then block_window
-(2 min) before the first block, then a submission per block per BP.
-Budget liberally — see @pytest.mark.timeout.
+Slow side: mina-daemons run with production protocol constants
+(`k=290`, `slots_per_epoch=7140`, 3-min slot window) so the verifier
+image's baked-in genesis_constants match — see fixtures/minimina/
+genesis_ledger.json comment. Bootstrap + first slot ownership + libp2p
+discovery typically takes 10–20 minutes; budget liberally.
 """
 
 import time
@@ -25,9 +27,9 @@ EXPECTED_SUBMITTERS = {
 }
 
 
-@pytest.mark.timeout(900)
+@pytest.mark.timeout(2700)
 def test_minimina_bps_submit_to_backend(backend_ready, db, s3, s3_bucket, s3_prefix):
-    deadline = time.monotonic() + 850
+    deadline = time.monotonic() + 2650
     while time.monotonic() < deadline:
         with db.cursor() as cur:
             cur.execute(
@@ -36,7 +38,7 @@ def test_minimina_bps_submit_to_backend(backend_ready, db, s3, s3_bucket, s3_pre
             rows = cur.fetchall()
         if rows:
             break
-        time.sleep(5)
+        time.sleep(15)
     else:
         pytest.fail("no submissions arrived from minimina BPs within the deadline")
 
