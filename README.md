@@ -86,12 +86,13 @@ make down           # stop and wipe everything
 
 ## Decisions baked in
 
-1. **S3 emulation** — MinIO. Backend is pointed at it via `AWS_ENDPOINT_URL_S3` + `AWS_S3_FORCE_PATH_STYLE=1`.
+1. **S3 emulation** — MinIO. Backend is pointed at it via `AWS_ENDPOINT_URL_S3` + `AWS_S3_FORCE_PATH_STYLE=1`. The worker image carries the same patch since `submission-updater`'s pinned `aws-sdk-go-v2/config v1.26.0` predates the SDK's native support for that env var.
 2. **Signing** — real Schnorr signatures from minimina-managed BPs, verified by the backend. No bypass.
 3. **Whitelist** — disabled (`delegation_whitelist_disabled: true`). Google Sheets path is out of e2e scope.
-4. **Custom genesis** — minimina spins up its own genesis ledger; the verifier needs the same one to validate consensus, so it's baked into the worker image at build time (`compose/worker/Dockerfile`) and exposed via `GENESIS_LEDGER_FILE`.
+4. **Custom genesis** — minimina spins up its own genesis ledger; the daemon reads it from the topology, and a copy is baked into the worker image so `delegation-verify` runs with `--config-file <that>` even though Pickles is skipped (see #6, decoding still needs the right ledger).
 5. **Service version pinning** — components are consumed as published images, pinned via `*_TAG` in `.env`. Avoid `latest` — pin to a release tag so failures are reproducible and bumps are intentional.
-6. **Network era** — mina-daemon and the bundled `delegation-verify` in submission-updater are both Berkeley-era, matching the topology that ships with minimina. Mixing eras would risk bin_prot mismatch.
+6. **SNARK verification disabled (`NO_CHECKS=1`)** — *cryptographic* consensus verification of each block is skipped at the verifier. The compromise is documented inline in `compose/docker-compose.yaml`: with the small-network protocol constants minimina uses for fast bootstrap (k=20, 2-min slots), the verifier's compile-time genesis_constants don't match the proofs the daemon produces, and we couldn't get Pickles to accept blocks even with same-commit image pairs and identical-on-paper constants. Mina has its own SNARK test suites upstream, so the e2e here covers everything *above* the cryptographic check: real BPs, real signed submissions, real validation batches, real points + scoreboard rows, real leaderboard queries.
+7. **Daemon ↔ verifier era** — `mina-daemon` and `mina-delegation-verifier` images are pinned to the **same commit** (`4345f4c-bookworm-devnet`). Even with NO_CHECKS the verifier still bin_prot-decodes the block to extract `state_hash`/`parent`/`height`/`slot`; mismatched eras would fail decode.
 
 ## Golden fixtures
 

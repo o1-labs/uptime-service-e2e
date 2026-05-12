@@ -11,14 +11,11 @@ on:
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    # 3-hour budget covers a full minimina bootstrap under production
-    # protocol constants (k=290, slots_per_epoch=7140, 3-min block window
-    # — see fixtures/minimina/genesis_ledger.json for why those values).
-    # First block typically lands 10–20 min in, then ~3 min per block, so
-    # full pipeline (submissions → validation → points → scoreboard) often
-    # takes 45–90 min wall-clock. Tighten only after we have stable
-    # historical timings.
-    timeout-minutes: 180
+    # ~50 min covers a full minimina bootstrap on the small-network
+    # protocol constants (k=20, 2-min slots — see
+    # fixtures/minimina/genesis_ledger.json) plus validation + leaderboard
+    # poll loops. Bump only if historical timings drift longer.
+    timeout-minutes: 50
 
     steps:
       - name: 📥 Checkout

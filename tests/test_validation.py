@@ -19,9 +19,9 @@ import time
 import pytest
 
 
-@pytest.mark.timeout(3600)
+@pytest.mark.timeout(1200)
 def test_minimina_submissions_get_verified(backend_ready, db):
-    deadline = time.monotonic() + 3550
+    deadline = time.monotonic() + 1150
     while time.monotonic() < deadline:
         with db.cursor() as cur:
             cur.execute(
@@ -29,7 +29,7 @@ def test_minimina_submissions_get_verified(backend_ready, db):
             )
             if cur.fetchone():
                 return
-        time.sleep(15)
+        time.sleep(5)
 
     # Conftest will attach a Postgres snapshot with the verified/error
     # breakdown — that tells us at a glance whether nothing came in, or
