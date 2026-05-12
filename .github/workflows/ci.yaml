@@ -23,11 +23,12 @@ on:
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    # ~50 min covers a full minimina bootstrap on the small-network
-    # protocol constants (k=20, 2-min slots — see
-    # fixtures/minimina/genesis_ledger.json) plus validation + leaderboard
-    # poll loops. Bump only if historical timings drift longer.
-    timeout-minutes: 50
+    # 60 min: a fresh minimina bootstrap on small-network constants
+    # (k=20, 2-min slots — see fixtures/minimina/genesis_ledger.json) has
+    # been observed to take up to 30 min on slower shared runners. The
+    # `first_submission_arrived` session fixture allows up to 30 min for
+    # that, plus ~10 min for validation + ~10 min for scoreboard.
+    timeout-minutes: 60
 
     steps:
       - name: 📥 Checkout

@@ -48,8 +48,8 @@ def test_leaderboard_db_ready(leaderboard_url):
     assert response.status_code == 200, response.text
 
 
-@pytest.mark.timeout(1500)
-def test_validated_bp_reaches_scoreboard(leaderboard_url, db):
+@pytest.mark.timeout(900)
+def test_validated_bp_reaches_scoreboard(first_submission_arrived, leaderboard_url, db):
     """After verified submissions accumulate, the validation coordinator
     inserts a `points` row per verified-batch + writes a nodes/score_history
     entry that the leaderboard surfaces via /uptimescore/<bp>.
@@ -58,8 +58,11 @@ def test_validated_bp_reaches_scoreboard(leaderboard_url, db):
     signal that validation processed at least one verified submission. The
     leaderboard endpoint is a downstream view that depends on the
     `update_scoreboard` window populating, which we check separately.
+
+    Submissions are guaranteed present by the session fixture, so the wait
+    here is bounded by the validation batch interval + scoreboard window.
     """
-    deadline = time.monotonic() + 1200
+    deadline = time.monotonic() + 600
     while time.monotonic() < deadline:
         with db.cursor() as cur:
             cur.execute("SELECT count(*) FROM points")

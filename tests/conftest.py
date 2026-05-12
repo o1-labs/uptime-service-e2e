@@ -115,23 +115,34 @@ def _dump_db_snapshot(dsn: str) -> str:
     return "\n".join(out)
 
 
-def pytest_collection_modifyitems(items):
-    """Push scoring test to the end of the run.
+@pytest.fixture(scope="session")
+def first_submission_arrived(backend_ready, postgres_dsn):
+    """Wait once for minimina BPs to finish bootstrap and start submitting.
 
-    test_validated_bp_reaches_scoreboard is gated on the slowest pipeline
-    path (minimina bootstrap → first block → backend submit → validation
-    batch → points insert). It alphabetically lands in test_leaderboard.py
-    and runs first, racing the bootstrap from a cold start. On slow CI
-    runners that race is tight — PR #4's nightly schedule landed a run
-    where bootstrap took ~27 min and the scoring test's 20-min deadline
-    expired ~3 min before submissions started arriving. Running it after
-    test_submission + test_validation means by the time it polls, the
-    upstream chain has already produced verified submissions, and points
-    typically land within the next coordinator cycle.
+    Mina daemons take 15–30 min to reach consensus and start producing
+    blocks on a fresh small-constants network — variance on shared CI
+    runners is large enough that any per-test 14-min deadline races the
+    bootstrap. Doing the wait once at session scope amortizes the cost:
+    the first dependent test pays it, the rest see rows already there
+    and assert in seconds.
     """
-    def order_key(item):
-        return 1 if "test_validated_bp_reaches_scoreboard" in item.nodeid else 0
-    items.sort(key=order_key)
+    deadline = time.monotonic() + 1800
+    last_count = 0
+    while time.monotonic() < deadline:
+        try:
+            with psycopg2.connect(postgres_dsn) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT count(*) FROM submissions")
+                    (last_count,) = cur.fetchone()
+                    if last_count > 0:
+                        return last_count
+        except psycopg2.Error:
+            pass
+        time.sleep(10)
+    pytest.fail(
+        f"no submissions arrived from minimina BPs within 30 min "
+        f"(final count: {last_count})"
+    )
 
 
 @pytest.hookimpl(hookwrapper=True)
