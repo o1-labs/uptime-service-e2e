@@ -115,6 +115,25 @@ def _dump_db_snapshot(dsn: str) -> str:
     return "\n".join(out)
 
 
+def pytest_collection_modifyitems(items):
+    """Push scoring test to the end of the run.
+
+    test_validated_bp_reaches_scoreboard is gated on the slowest pipeline
+    path (minimina bootstrap → first block → backend submit → validation
+    batch → points insert). It alphabetically lands in test_leaderboard.py
+    and runs first, racing the bootstrap from a cold start. On slow CI
+    runners that race is tight — PR #4's nightly schedule landed a run
+    where bootstrap took ~27 min and the scoring test's 20-min deadline
+    expired ~3 min before submissions started arriving. Running it after
+    test_submission + test_validation means by the time it polls, the
+    upstream chain has already produced verified submissions, and points
+    typically land within the next coordinator cycle.
+    """
+    def order_key(item):
+        return 1 if "test_validated_bp_reaches_scoreboard" in item.nodeid else 0
+    items.sort(key=order_key)
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     """When a test fails, attach a Postgres state dump to the report.
