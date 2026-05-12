@@ -7,6 +7,18 @@ on:
   pull_request:
     branches:
       - main
+  # Nightly catch-all run against main. 04:00 UTC = 05:00 CET / 21:00 PT,
+  # well outside US + EU working hours so a flaky run doesn't disrupt the
+  # team. Triggers regardless of whether anything was pushed that day —
+  # the e2e exercises every upstream image we pull (mina-daemon,
+  # delegation-verifier, submission-updater, backend, validation,
+  # leaderboard-api), so we still want signal if any of them silently
+  # republished a regression on their `:latest` track.
+  schedule:
+    - cron: '0 4 * * *'
+  # Manual trigger for ad-hoc re-runs (debugging a flake, rerunning after
+  # a known upstream fix without waiting for tomorrow's nightly).
+  workflow_dispatch:
 
 jobs:
   e2e:
