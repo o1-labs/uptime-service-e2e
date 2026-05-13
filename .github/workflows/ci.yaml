@@ -7,15 +7,29 @@ on:
   pull_request:
     branches:
       - main
+  # Nightly catch-all run against main. 04:00 UTC = 05:00 CET / 21:00 PT,
+  # well outside US + EU working hours so a flaky run doesn't disrupt the
+  # team. Triggers regardless of whether anything was pushed that day —
+  # the e2e exercises every upstream image we pull (mina-daemon,
+  # delegation-verifier, submission-updater, backend, validation,
+  # leaderboard-api), so we still want signal if any of them silently
+  # republished a regression on their `:latest` track.
+  schedule:
+    - cron: '0 4 * * *'
+  # Manual trigger for ad-hoc re-runs (debugging a flake, rerunning after
+  # a known upstream fix without waiting for tomorrow's nightly).
+  workflow_dispatch:
 
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    # ~50 min covers a full minimina bootstrap on the small-network
-    # protocol constants (k=20, 2-min slots — see
-    # fixtures/minimina/genesis_ledger.json) plus validation + leaderboard
-    # poll loops. Bump only if historical timings drift longer.
-    timeout-minutes: 50
+    # 75 min: a fresh minimina bootstrap on small-network constants
+    # (k=20, 2-min slots — see fixtures/minimina/genesis_ledger.json) has
+    # been observed to take up to 30 min on slower shared runners. The
+    # `first_submission_arrived` session fixture allows up to 35 min for
+    # that, plus ~10 min for validation + ~10 min for scoreboard, plus
+    # ~10 min for setup/image pull/teardown.
+    timeout-minutes: 75
 
     steps:
       - name: 📥 Checkout

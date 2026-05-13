@@ -19,9 +19,11 @@ import time
 import pytest
 
 
-@pytest.mark.timeout(1200)
-def test_minimina_submissions_get_verified(backend_ready, db):
-    deadline = time.monotonic() + 1150
+@pytest.mark.timeout(600)
+def test_minimina_submissions_get_verified(first_submission_arrived, db):
+    # Submissions exist by the time we enter; just wait for the validation
+    # coordinator's next batch cycle to flip one to verified=true.
+    deadline = time.monotonic() + 550
     while time.monotonic() < deadline:
         with db.cursor() as cur:
             cur.execute(

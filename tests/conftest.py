@@ -115,6 +115,39 @@ def _dump_db_snapshot(dsn: str) -> str:
     return "\n".join(out)
 
 
+@pytest.fixture(scope="session")
+def first_submission_arrived(backend_ready, postgres_dsn):
+    """Wait once for minimina BPs to finish bootstrap and start submitting.
+
+    Mina daemons take 15–30 min to reach consensus and start producing
+    blocks on a fresh small-constants network — variance on shared CI
+    runners is large enough that any per-test 14-min deadline races the
+    bootstrap. Doing the wait once at session scope amortizes the cost:
+    the first dependent test pays it, the rest see rows already there
+    and assert in seconds.
+
+    Note: pyproject.toml sets `timeout_func_only = true` so the per-test
+    pytest-timeout marker doesn't kill this fixture during setup.
+    """
+    deadline = time.monotonic() + 2100
+    last_count = 0
+    while time.monotonic() < deadline:
+        try:
+            with psycopg2.connect(postgres_dsn) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT count(*) FROM submissions")
+                    (last_count,) = cur.fetchone()
+                    if last_count > 0:
+                        return last_count
+        except psycopg2.Error:
+            pass
+        time.sleep(10)
+    pytest.fail(
+        f"no submissions arrived from minimina BPs within 30 min "
+        f"(final count: {last_count})"
+    )
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     """When a test fails, attach a Postgres state dump to the report.
