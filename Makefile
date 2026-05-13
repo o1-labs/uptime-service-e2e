@@ -50,7 +50,12 @@ schema: env
 
 net:
 	@docker network inspect $(SHARED_NET) >/dev/null 2>&1 || \
-		docker network create $(SHARED_NET)
+		docker network create --internal $(SHARED_NET)
+	@# --internal: the minimina BPs are dual-homed on this network. The
+	@# mina-daemon image bakes in a devnet peer-list URL + DHT bootstrap
+	@# peers and will hammer them otherwise. Without egress, those dials
+	@# fail fast and the daemons fall back to the local seed-only
+	@# peer-list-file minimina writes for the network.
 
 # Rewrite genesis_state_timestamp to ~1 minute ago so the network starts
 # at slot 0 rather than catching up years of empty slots. Generated

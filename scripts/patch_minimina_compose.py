@@ -35,6 +35,21 @@ def patch(compose_path: Path, dummy_service: str) -> None:
     # producing a warning on every docker compose invocation. Drop it.
     compose.pop("version", None)
 
+    # Mark the project's default network as internal: the mina-daemon
+    # image is built with devnet's compile-time config, so the daemons
+    # try to fetch https://bootnodes.minaprotocol.com/.../devnet.txt and
+    # bootstrap their kad-DHT against the public devnet seeds. None of
+    # those peers will ever finish libp2p security negotiation against
+    # our isolated test network, but the daemons spend long minutes
+    # retrying instead of falling back to the local peer-list-file —
+    # which is the only thing we actually want them to use. Cutting
+    # internet egress at the docker bridge makes the failures immediate
+    # and lets the daemons settle on the local seed within seconds.
+    networks = compose.setdefault("networks", {})
+    default_net = networks.get("default") or {}
+    default_net["internal"] = True
+    networks["default"] = default_net
+
     with compose_path.open("w") as f:
         yaml.safe_dump(compose, f, sort_keys=False)
 
